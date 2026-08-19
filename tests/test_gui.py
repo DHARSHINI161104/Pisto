@@ -80,13 +80,28 @@ def test_demo_coordinate_inside_scoring_area():
 
 def test_session_demo_live_transitions():
     s = GuiSession()
-    assert s.mode == "demo" and s.camera_state == "standby"
+    assert s.mode == "demo" and s.camera_state == "ready"
     s.set_live()
     assert s.mode == "live" and s.system_state == "ACTIVE"
     s.set_camera_state("connected")
     assert s.camera_state == "connected"
     s.set_demo()
-    assert s.mode == "demo" and s.camera_state == "standby"
+    assert s.mode == "demo" and s.camera_state == "ready"
+
+
+def test_demo_mode_seeds_sample_shots(qapp):
+    """Opening the GUI without a camera must show sample shots immediately."""
+    from app.gui.main_window import MainWindow
+    win = MainWindow(force_demo=True)
+    win.show()
+    app = qapp
+    app.processEvents()
+    assert win.session.mode == "demo"
+    assert win.session.camera_state == "ready"
+    assert win.session.system_state == "READY"
+    assert len(win.session.shots) == 3
+    assert win.scoreboard.total_score.text() != "0.0"
+    win.close()
 
 
 # -------------------------------------------------------------- widget --

@@ -16,11 +16,12 @@ class ShotDetector:
     def __init__(self, calibration):
         self.cal = calibration
         self._reference = None
-        self._candidates = {}          # (mm_x, mm_y) -> consecutive-seen count
+        self._candidates = {}          # tracked_key -> [seen_count, mm_x, mm_y]
         self.holes = []                # list of (mm_x, mm_y)
         self.last_frame = None
         self.last_overlay = None
         self.warmup = config.DETECTOR_WARMUP_FRAMES
+        self.cooldown = 0              # frames left before detection resumes
 
     # ------------------------------------------------------------- setup --
     def _blur(self, warped_gray):
@@ -32,10 +33,12 @@ class ShotDetector:
         self._reference = np.asarray(self._blur(warped_gray), dtype=np.float32)
         self._candidates.clear()
         self.warmup = config.DETECTOR_WARMUP_FRAMES
+        self.cooldown = 0
 
     def reset_holes(self):
         self.holes = []
         self._candidates.clear()
+        self.cooldown = 0
 
     # --------------------------------------------------------- geometry ---
     def _area_range_px(self):
@@ -52,7 +55,15 @@ class ShotDetector:
 
     # ---------------------------------------------------------- detection --
     def update(self, warped_gray):
-        """Feed a warped grey frame; return newly confirmed holes in mm."""
+        """Feed a warped grey frame; return newly confirmed holes in mm.
+
+        A shot is only scored when a diff blob of plausible pellet size appears
+        at a STABLE position on MIN_HOLE_PERSIST_FRAMES CONSECUTIVE frames.
+        Candidates whose centroid jumps more than SHOT_TRACK_RADIUS_MM are
+        treated as noise and reset. After a confirmed shot the reference is
+        healed (the hole stops diffing) and SHOT_COOLDOWN_FRAMES of quiet time
+        is enforced - so one change is scored once, not repeatedly.
+        """
         if self._reference is None:
             self.set_reference(warped_gray)
             return []
@@ -65,8 +76,16 @@ class ShotDetector:
             self.last_frame = warped_gray
             self.last_overlay = self.draw_overlay(warped_gray, self.holes)
             return []
+        if self.cooldown > 0:
+            # Quiet time after a shot: let the scene settle back into baseline.
+            self.cooldown -= 1
+            self._reference = self._reference * 0.9 + frame * 0.1
+            self._candidates.clear()
+            self.last_frame = warped_gray
+            self.last_overlay = self.draw_overlay(warped_gray, self.holes)
+            return []
+
         diff = cv2.absdiff(frame, self._reference)
-        new_holes = []
         side = frame.shape[0]
         lo_area, hi_area = self._area_range_px()
 
@@ -79,6 +98,7 @@ class ShotDetector:
                                        cv2.CHAIN_APPROX_SIMPLE)
 
         changed = False
+        matched = set()   # candidate keys still alive this frame
         for cnt in contours:
             area = cv2.contourArea(cnt)
             if area < lo_area * 0.5 or area > hi_area * 3.0:
@@ -94,13 +114,40 @@ class ShotDetector:
                 continue
             if self._is_known(mm_x, mm_y):
                 continue
-            key = (round(mm_x, 1), round(mm_y, 1))
-            self._candidates[key] = self._candidates.get(key, 0) + 1
             changed = True
-            if self._candidates[key] >= config.MIN_HOLE_PERSIST_FRAMES:
-                self.holes.append(key)
-                new_holes.append(key)
-                self._candidates[key] = 0  # prevent re-adding same key next frame
+            best_key, best_d = None, config.SHOT_TRACK_RADIUS_MM
+            for key, (count, kx, ky) in self._candidates.items():
+                d = ((mm_x - kx) ** 2 + (mm_y - ky) ** 2) ** 0.5
+                if d < best_d:
+                    best_key, best_d = key, d
+            if best_key is None:
+                # New candidate at this frame's position.
+                key = (round(mm_x, 1), round(mm_y, 1))
+                self._candidates[key] = [1, mm_x, mm_y]
+                matched.add(key)
+            else:
+                # Same candidate seen again: keep it only if it stayed put.
+                count, kx, ky = self._candidates.pop(best_key)
+                count += 1
+                kx = kx + (mm_x - kx) * 0.3   # gently track its centroid
+                ky = ky + (mm_y - ky) * 0.3
+                key = (round(kx, 1), round(ky, 1))
+                self._candidates[key] = [count, kx, ky]
+                matched.add(key)
+
+        # Strict consecutive frames: drop anything not seen again this frame.
+        for key in [k for k in self._candidates if k not in matched]:
+            del self._candidates[key]
+
+        new_holes = []
+        for key, (count, kx, ky) in list(self._candidates.items()):
+            if count >= config.MIN_HOLE_PERSIST_FRAMES:
+                hole = (round(kx, 1), round(ky, 1))
+                self.holes.append(hole)
+                new_holes.append(hole)
+                del self._candidates[key]
+                self._heal_reference(frame, hole, side)
+                self.cooldown = config.SHOT_COOLDOWN_FRAMES
 
         # Gently adapt the reference to lighting drift when nothing changed.
         if not changed:
@@ -108,6 +155,18 @@ class ShotDetector:
         self.last_frame = warped_gray
         self.last_overlay = self.draw_overlay(warped_gray, self.holes)
         return new_holes
+
+    def _heal_reference(self, frame, hole_mm, side):
+        """Paint the confirmed hole into the reference so it stops diffing."""
+        s = self.cal.scale_px_per_mm
+        cx = int(hole_mm[0] * s + side / 2.0)
+        cy = int(hole_mm[1] * s + side / 2.0)
+        r = max(int(config.MAX_HOLE_RADIUS_MM * s) + 2, 4)
+        y0, y1 = max(0, cy - r), min(side, cy + r + 1)
+        x0, x1 = max(0, cx - r), min(side, cx + r + 1)
+        patch = frame[y0:y1, x0:x1]
+        color = float(np.mean(patch)) if patch.size else float(frame[cy, cx])
+        cv2.circle(self._reference, (cx, cy), r, color, -1)
 
     def _is_known(self, mm_x, mm_y):
         for hx, hy in self.holes:

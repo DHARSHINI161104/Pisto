@@ -128,7 +128,7 @@ class MainWindow(QMainWindow):
             if camera.available():
                 self._enter_live()
                 return
-        self._enter_demo()
+        self._enter_demo(seed=True)
 
     def _enter_live(self):
         self.session.set_live()
@@ -137,8 +137,10 @@ class MainWindow(QMainWindow):
         self.worker.frame_ready.connect(self.camera_view.set_frame)
         self.worker.status_changed.connect(self._on_camera_status)
         self.worker.start()
+        self.show_camera_act.setChecked(True)
+        self.camera_view.show()
 
-    def _enter_demo(self):
+    def _enter_demo(self, seed=False):
         if self.worker is not None:
             self.worker.stop()
             self.worker.wait(3000)
@@ -147,13 +149,18 @@ class MainWindow(QMainWindow):
         self.show_camera_act.setChecked(False)
         self.camera_view.hide()
         self.session.set_demo()
+        if seed and not self.session.shots:
+            for _ in range(3):
+                self.session.add_demo_shot()
 
     def _on_shot(self, mm_x, mm_y):
         self.session.add_shot(mm_x, mm_y)
 
     def _on_camera_status(self, state):
+        # Neutral camera states: READY (no camera), CONNECTED (found),
+        # ACTIVE (processing). Never show a negative message for no camera.
         display = {"connected": "connected", "searching": "active",
-                   "ready": "active", "standby": "standby"}.get(state, state)
+                   "ready": "active", "standby": "ready"}.get(state, state)
         self.session.set_camera_state(display)
 
     def _toggle_mode(self):
@@ -164,7 +171,7 @@ class MainWindow(QMainWindow):
             if camera.available():
                 self._enter_live()
             else:
-                self.session.set_camera_state("standby")
+                self.session.set_camera_state("ready")
 
     # ----------------------------------------------------------- toggles --
     def _toggle_camera_view(self):

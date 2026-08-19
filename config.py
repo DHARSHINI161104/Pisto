@@ -48,7 +48,16 @@ MIN_HOLE_RADIUS_MM = 1.4
 MAX_HOLE_RADIUS_MM = 4.0
 HOLE_MIN_SEPARATION_MM = 3.0    # ignore blobs closer than this to a known hole
 DIFF_THRESHOLD = 30             # greyscale difference to count as a change
-MIN_HOLE_PERSIST_FRAMES = 3     # a candidate must be seen this many frames
+# A candidate must be seen at a STABLE position on this many CONSECUTIVE frames
+# before it is scored as a shot. Random camera noise rarely persists this long.
+MIN_HOLE_PERSIST_FRAMES = 4
+# How far a candidate centroid may wander between frames while still counting
+# as the same candidate. Larger wobble resets its counter (kills noise blobs).
+SHOT_TRACK_RADIUS_MM = 2.0
+# After a shot is scored, detection is suppressed for this many frames so the
+# target can settle (a real shooter reloads anyway). Prevents the same change
+# being re-scored over and over as the camera/lighting wavers.
+SHOT_COOLDOWN_FRAMES = 45
 HOUGH_EDGE_LOW = 60
 HOUGH_EDGE_HIGH = 150
 

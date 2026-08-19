@@ -3,6 +3,14 @@ from app.detection import ShotDetector, generate_synthetic_target
 from app.scoring import score_from_distance
 
 
+def _fresh_detector(cal, img):
+    det = ShotDetector(cal)
+    det.set_reference(img)
+    for _ in range(config.DETECTOR_WARMUP_FRAMES + 1):
+        det.update(img)
+    return det
+
+
 def _holes_at(*mm_positions, side=400):
     img, cal = generate_synthetic_target(side=side, holes_mm=[])
     det = ShotDetector(cal)
@@ -65,3 +73,58 @@ def test_warmup_ignores_immediate_changes():
         # A hole appearing during warm-up must NOT be scored.
         assert det.update(img2) == []
     assert det.holes == []
+
+
+def test_jittering_blob_is_not_scored():
+    """A blob that wanders more than SHOT_TRACK_RADIUS_MM each frame must never
+    confirm - this is what caused endless false shots from camera noise."""
+    img, cal = generate_synthetic_target(side=400, holes_mm=[])
+    det = _fresh_detector(cal, img)
+    step = config.SHOT_TRACK_RADIUS_MM + 1.0
+    for i in range(15):
+        pos = (5.0 + i * step, 0.0)
+        frame, _ = generate_synthetic_target(side=400, holes_mm=[pos])
+        assert det.update(frame) == []
+    assert det.holes == []
+
+
+def test_non_consecutive_appearance_is_not_scored():
+    """A blob that flickers on/off must not accumulate toward a shot."""
+    img, cal = generate_synthetic_target(side=400, holes_mm=[])
+    det = _fresh_detector(cal, img)
+    pos = (8.0, 4.0)
+    hole_img, _ = generate_synthetic_target(side=400, holes_mm=[pos])
+    for _ in range(20):
+        det.update(hole_img)          # present
+        det.update(img)               # absent next frame
+    assert det.holes == []
+
+
+def test_cooldown_blocks_shot_during_reload():
+    """After one shot, a new change during the cooldown must NOT be scored."""
+    img, cal = generate_synthetic_target(side=400, holes_mm=[])
+    det = _fresh_detector(cal, img)
+
+    hole1_img, _ = generate_synthetic_target(side=400, holes_mm=[(8.0, 0.0)])
+    new = []
+    for _ in range(config.MIN_HOLE_PERSIST_FRAMES):
+        new.extend(det.update(hole1_img))
+    assert len(new) == 1
+    assert det.cooldown > 0
+
+    # A new hole appears during the reload interval -> ignored. The clean
+    # target is still being watched (only the first hole is on it).
+    hole2_img, _ = generate_synthetic_target(side=400, holes_mm=[(-8.0, -8.0)])
+    during = []
+    for _ in range(config.SHOT_COOLDOWN_FRAMES):
+        during.extend(det.update(img))
+    assert during == []
+    assert len(det.holes) == 1
+    assert abs(det.holes[0][0] - 8.0) < 1.0 and abs(det.holes[0][1]) < 1.0
+
+    # After the cooldown, the new hole is scored as the next shot.
+    after = []
+    for _ in range(config.MIN_HOLE_PERSIST_FRAMES):
+        after.extend(det.update(hole2_img))
+    assert len(after) == 1
+    assert len(det.holes) == 2

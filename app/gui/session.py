@@ -41,7 +41,7 @@ class GuiSession(QObject):
         super().__init__(parent)
         self.shots = []                    # list[Shot]
         self.mode = "demo"                 # 'demo' | 'live'
-        self.camera_state = "standby"      # 'standby' | 'connected' | 'active'
+        self.camera_state = "ready"        # neutral (ready) | connected | active
         self.system_state = "READY"        # 'READY' | 'ACTIVE'
         self.player = "PLAYER 01"
         self.session_label = "DEMO MATCH"
@@ -91,7 +91,7 @@ class GuiSession(QObject):
     def set_demo(self):
         self.mode = "demo"
         self.system_state = "READY"
-        self.camera_state = "standby"
+        self.camera_state = "ready"     # neutral: not connected, still ready
         self.session_label = "DEMO MATCH"
         self.status_changed.emit()
 

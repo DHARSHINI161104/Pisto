@@ -88,8 +88,14 @@ def test_second_shot_after_first():
     _run_calibration_and_warmup()
     st = state.STATE
 
+    # First shot.
     first = (10.0, 0.0)
     for _ in range(config.MIN_HOLE_PERSIST_FRAMES + 2):
+        pipeline._handle_frame(st, _camera_frame(holes_mm=[first]))
+
+    # Reload interval: the first hole is still visible, no new hole, and the
+    # detector is in its post-shot cooldown.
+    for _ in range(config.SHOT_COOLDOWN_FRAMES):
         pipeline._handle_frame(st, _camera_frame(holes_mm=[first]))
 
     # Second shot appears on a later frame set.

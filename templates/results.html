@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Today's Results{% endblock %}
+
+{% block content %}
+<h2>Results for {{ day }} <span class="muted small">({{ path }})</span></h2>
+<div class="row mt">
+  <a class="btn" href="/export/results">Download CSV</a>
+</div>
+
+<div class="panel mt">
+{% if rows %}
+<table>
+  <thead>
+    <tr><th>User</th><th>ID</th><th>Time</th><th>Shots</th><th>Series</th><th>Total</th><th>X</th></tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.name }}</td>
+      <td class="muted small">{{ r.user_id }}</td>
+      <td class="small">{{ r.started_at[11:19] }}</td>
+      <td>{{ r.shots }}</td>
+      <td class="small muted">{{ r.series }}</td>
+      <td><strong>{{ r.total }}</strong></td>
+      <td>{{ r.x_count }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No completed games today yet.</p>
+{% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Rifle Score Display{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="{% block bodyclass %}{% endblock %}">
+  {% block topbar %}
+  <div class="topbar">
+    <div class="brand">Rifle Club <span class="muted">Score Display</span></div>
+    <div class="links">
+      <a href="/">Main</a>
+      <a href="/display">Scoreboard</a>
+      <a href="/history">History</a>
+      <a href="/results/today">Today's Results</a>
+      <a href="/print/target" target="_blank">Print Target</a>
+    </div>
+  </div>
+  {% endblock %}
+
+  <main class="{% block mainclass %}{% endblock %}">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script>
+    window.GEOMETRY = {{ (geometry or {}) | tojson | safe }};
+    async function api(path, body) {
+      const opts = body ? {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      } : {};
+      const r = await fetch(path, opts);
+      return r.json();
+    }
+    function scoreFromMm(x, y) {
+      const d = Math.hypot(x, y);
+      const radii = {};
+      Object.entries(GEOMETRY.radii_mm).forEach(([ring, r]) => radii[Number(ring)] = r);
+      const X = GEOMETRY.inner_ten_mm;
+      if (d <= X) return 10.9;
+      if (d > radii[1]) return 0;
+      let score;
+      for (let ring = 10; ring >= 1; ring--) {
+        if (d <= radii[ring]) {
+          let inner, bw, top;
+          if (ring === 10) {
+            inner = X;
+            bw = (radii[ring] - inner) / 9;
+            top = 8;
+          } else {
+            inner = radii[ring + 1];
+            bw = (radii[ring] - inner) / 10;
+            top = 9;
+          }
+          const band = Math.min(Math.floor((d - inner) / bw), 9);
+          const dec = Math.max(top - band, 0);
+          score = ring + dec / 10;
+          break;
+        }
+      }
+      return Math.round(score * 10) / 10;
+    }
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

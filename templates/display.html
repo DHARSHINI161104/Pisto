@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block title %}Scoreboard{% endblock %}
+{% block bodyclass %}kiosk{% endblock %}
+{% block topbar %}{% endblock %}
+{% block mainclass %}{% endblock %}
+
+{% block content %}
+<div class="disp-grid">
+  <!-- ===================== TARGET PANEL ===================== -->
+  <section class="target-panel">
+    <div class="disp-toolbar">
+      <span class="disp-title">TARGET</span>
+      <div class="toggles">
+        <label class="toggle"><input type="checkbox" id="tglCamera" checked> <span>Show Camera</span></label>
+        <label class="toggle"><input type="checkbox" id="tglGeo" checked> <span>Show Target Geometry</span></label>
+        <label class="toggle"><input type="checkbox" id="tglMarkers" checked> <span>Show Shot Markers</span></label>
+      </div>
+    </div>
+
+    <div class="target-stage">
+      <div id="targetWrap">{{ target_svg | safe }}</div>
+      <div id="cameraWrap">
+        <img src="/video_feed" alt="live camera">
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SCOREBOARD PANEL ===================== -->
+  <aside class="score-panel">
+    <div class="status-strip">
+      <div class="st-item"><span class="st-label">CAMERA</span><span class="st-value" id="stCam">...</span></div>
+      <div class="st-item"><span class="st-label">TARGET</span><span class="st-value" id="stTarget">...</span></div>
+      <div class="st-item"><span class="st-label">CALIBRATION</span><span class="st-value" id="stCal">...</span></div>
+      <div class="st-item"><span class="st-label">SCORING</span><span class="st-value" id="stScore">...</span></div>
+    </div>
+
+    <div class="player-row">
+      <div class="player-block">
+        <div class="player-name" id="playerName">Waiting for shooter...</div>
+        <div class="player-id" id="playerId">scan a QR card to begin</div>
+      </div>
+      <div class="session-block">
+        <div class="session-label">MATCH / SESSION</div>
+        <div class="session-value" id="session">--</div>
+      </div>
+    </div>
+
+    <div class="total-block">
+      <div class="score-label">TOTAL SCORE</div>
+      <div class="total" id="total">0.0</div>
+      <div class="xcount" id="xcnt">X: 0</div>
+    </div>
+
+    <div class="current-block">
+      <div class="score-label">CURRENT SHOT</div>
+      <div class="current-score" id="currentScore">--</div>
+      <div class="current-info" id="currentInfo">&nbsp;</div>
+      <div class="shot-position" id="shotPos">&nbsp;</div>
+    </div>
+
+    <div class="history-block">
+      <div class="score-label">SHOT HISTORY</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>SHOT</th><th>X</th><th>Y</th><th>DIST</th><th>SCORE</th></tr>
+          </thead>
+          <tbody id="histBody">
+            {% for n in range(1, cfg.SHOTS_PER_GAME + 1) %}
+            <tr class="empty"><td>{{ n }}</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="events" id="events"></div>
+  </aside>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const GEOM = GEOMETRY;              // radii_mm / inner_ten_mm / card_mm
+const CARD = GEOM.card_mm;
+const CX = CARD / 2, CY = CARD / 2;
+
+function fmt(v) {
+  if (v === null || v === undefined || isNaN(v)) return '--';
+  return Number(v).toFixed(1);
+}
+
+// --- target marker layer ----------------------------------------------
+function markerSvg(s, current) {
+  if (s.x_mm === null || s.x_mm === undefined || s.y_mm === null || s.y_mm === undefined) return '';
+  const px = CX + s.x_mm, py = CY + s.y_mm;
+  if (current) {
+    return `<g class="marker-current">
+      <circle cx="${px.toFixed(2)}" cy="${py.toFixed(2)}" r="3.0" fill="rgba(231,76,60,0.35)" stroke="#e74c3c" stroke-width="0.8"/>
+      <line x1="${(px-6).toFixed(2)}" y1="${py.toFixed(2)}" x2="${(px+6).toFixed(2)}" y2="${py.toFixed(2)}" stroke="#e74c3c" stroke-width="0.6"/>
+      <line x1="${px.toFixed(2)}" y1="${(py-6).toFixed(2)}" x2="${px.toFixed(2)}" y2="${(py+6).toFixed(2)}" stroke="#e74c3c" stroke-width="0.6"/>
+    </g>`;
+  }
+  return `<g class="marker-prev">
+    <circle cx="${px.toFixed(2)}" cy="${py.toFixed(2)}" r="2.2" fill="rgba(46,204,113,0.30)" stroke="#2ecc71" stroke-width="0.5"/>
+  </g>`;
+}
+
+function renderMarkers(shots) {
+  const g = document.getElementById('markers');
+  if (!g) return;
+  g.innerHTML = (shots || []).map(s => markerSvg(s, s.shot_no === shots.length)).join('');
+}
+
+// --- scoreboard -------------------------------------------------------
+function setStatus(id, text, ok) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.classList.toggle('ok', !!ok);
+  el.classList.toggle('bad', !ok);
+}
+
+function refresh() {
+  fetch('/api/state').then(r => r.json()).then(s => {
+    // status strip
+    setStatus('stCam', s.camera ? 'CONNECTED' : 'DISCONNECTED', s.camera);
+    setStatus('stTarget', s.target_detected ? 'DETECTED' : 'NOT DETECTED', s.target_detected);
+    setStatus('stCal', s.calibration_complete ? 'READY' : 'REQUIRED', s.calibration_complete);
+    setStatus('stScore', s.status === 'READY' ? 'ACTIVE' : s.status, s.status === 'READY');
+
+    // player / session
+    const nameEl = document.getElementById('playerName');
+    const idEl = document.getElementById('playerId');
+    if (s.user) {
+      nameEl.textContent = s.user.name;
+      idEl.textContent = s.user.id;
+    } else {
+      nameEl.textContent = 'Waiting for shooter...';
+      idEl.textContent = 'scan a QR card to begin';
+    }
+    document.getElementById('session').textContent =
+      s.session && s.session.date ? `${s.session.date}  #${s.session.game_id}` : '--';
+
+    // totals
+    document.getElementById('total').textContent = fmt(s.total);
+    document.getElementById('xcnt').textContent = 'X: ' + s.x_count;
+
+    // current shot
+    const cs = s.current_shot;
+    const curScore = document.getElementById('currentScore');
+    const curInfo = document.getElementById('currentInfo');
+    const shotPos = document.getElementById('shotPos');
+    if (cs) {
+      curScore.textContent = fmt(cs.score);
+      curInfo.textContent = `Shot ${cs.shot_no} of ${s.shots_per_game}`;
+      shotPos.textContent = `X=${fmt(cs.x_mm)} mm  Y=${fmt(cs.y_mm)} mm  D=${fmt(cs.distance_mm)} mm`;
+    } else {
+      curScore.textContent = '--';
+      curInfo.textContent = s.status === 'READY' ? 'awaiting shot' : 'not scoring';
+      shotPos.innerHTML = '&nbsp;';
+    }
+
+    // history table
+    const body = document.getElementById('histBody');
+    const rows = [];
+    for (let n = 1; n <= s.shots_per_game; n++) {
+      const sh = s.shots.find(x => x.shot_no === n);
+      if (sh) {
+        rows.push(`<tr class="${sh.shot_no === s.shot_count ? 'current-row' : ''}">
+          <td>${sh.shot_no}</td><td>${fmt(sh.x_mm)}</td><td>${fmt(sh.y_mm)}</td>
+          <td>${fmt(sh.distance_mm)}</td><td>${fmt(sh.score)}</td></tr>`);
+      } else {
+        rows.push(`<tr class="empty"><td>${n}</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>`);
+      }
+    }
+    body.innerHTML = rows.join('');
+
+    // events
+    const ev = document.getElementById('events');
+    ev.innerHTML = (s.events || []).slice(0, 6)
+      .map(e => `<div class="ev">${e.text.replace(/</g, '&lt;')}</div>`).join('');
+
+    renderMarkers(s.shots);
+  }).catch(() => {});
+}
+
+// --- toggles ----------------------------------------------------------
+function bindToggle(id, fn) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('change', () => fn(el.checked));
+}
+bindToggle('tglCamera', on => document.getElementById('cameraWrap').style.display = on ? '' : 'none');
+bindToggle('tglGeo', on => {
+  const g = document.getElementById('geometry');
+  if (g) g.style.display = on ? '' : 'none';
+});
+bindToggle('tglMarkers', on => {
+  const g = document.getElementById('markers');
+  if (g) g.style.display = on ? '' : 'none';
+});
+
+setInterval(refresh, 500);
+refresh();
+</script>
+{% endblock %}

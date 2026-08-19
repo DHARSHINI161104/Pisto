@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Scan QR - Rifle Score Display{% endblock %}
+
+{% block content %}
+<h2>Identify the shooter</h2>
+<div class="grid grid-2">
+  <div class="panel">
+    <h3>Live camera <span class="muted small">(scan a user QR code)</span></h3>
+    <div class="video-box">
+      <img src="/video_feed" alt="camera feed">
+    </div>
+    <p class="muted small mt">Hold a user's QR/ID card in front of the camera.</p>
+    {% if st.pending_qr_id %}
+    <div class="panel" style="background:var(--panel2)">
+      <strong>New user found ({{ st.pending_qr_id }}).</strong>
+      <p>Enter their name to register them.</p>
+      <div class="row">
+        <input id="newName" placeholder="Full name">
+        <button class="green" onclick="registerNew()">Register &amp; start</button>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <h3>No camera / manual entry</h3>
+    <label>User ID</label>
+    <div class="row mt">
+      <input id="manualId" placeholder="e.g. CLUB-102" list="userlist">
+      <button onclick="selectUser()">Continue</button>
+    </div>
+    <datalist id="userlist">
+      {% for u in users %}
+      <option value="{{ u.id }}">{{ u.name }}</option>
+      {% endfor %}
+    </datalist>
+    <h3 class="mt">Or pick a user</h3>
+    <select id="pickUser" onchange="selectUser(this.value)">
+      <option value="">-- choose --</option>
+      {% for u in users %}
+      <option value="{{ u.id }}">{{ u.name }} ({{ u.id }})</option>
+      {% endfor %}
+    </select>
+  </div>
+</div>
+
+<div class="panel">
+  <h3>Events</h3>
+  <ul>
+    {% for ev in st.events %}
+    <li class="muted small">{{ ev.text }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function selectUser(id) {
+  const user_id = id || document.getElementById('manualId').value.trim();
+  if (!user_id) return alert('Enter a user ID');
+  const r = await api('/api/select_user', { user_id });
+  if (!r.ok) return alert(r.error || 'Failed');
+  location.reload();
+}
+async function registerNew() {
+  const name = document.getElementById('newName').value.trim();
+  const r = await api('/api/select_user', { user_id: '{{ st.pending_qr_id }}', name });
+  if (!r.ok) return alert(r.error || 'Failed');
+  location.reload();
+}
+</script>
+{% endblock %}

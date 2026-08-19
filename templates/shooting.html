@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% block title %}Live Shooting - Rifle Score Display{% endblock %}
+
+{% block content %}
+<h2>Live shooting</h2>
+
+<div class="panel status-panel">
+  <div class="status-grid">
+    <div class="status-item">
+      <span class="badge {% if st.camera %}green{% else %}warn{% endif %}">
+        CAMERA: {% if st.camera %}CONNECTED{% else %}NO CAMERA{% endif %}
+      </span>
+    </div>
+    <div class="status-item">
+      <span class="badge {% if st.target_detected %}green{% else %}warn{% endif %}">
+        TARGET: {% if st.target_detected %}DETECTED{% else %}SEARCHING{% endif %}
+      </span>
+    </div>
+    <div class="status-item">
+      <span class="badge {% if st.calibration_complete %}green{% else %}warn{% endif %}">
+        CALIBRATION: {% if st.calibration_complete %}COMPLETE{% else %}PENDING{% endif %}
+      </span>
+    </div>
+    <div class="status-item">
+      <span class="badge {% if st.status == 'READY' %}green{% else %}warn{% endif %}">
+        STATUS: {{ st.status }}
+      </span>
+    </div>
+  </div>
+</div>
+
+<div class="grid grid-2">
+  <div class="panel">
+    <div class="row" style="justify-content:space-between">
+      <div>
+        <strong>{{ st.user.name }}</strong> <span class="muted small">({{ st.user.id }})</span>
+      </div>
+      <div class="row">
+        <button onclick="startNewGame()">New game</button>
+        <button class="red" onclick="clearUser()">Change shooter</button>
+      </div>
+    </div>
+    <div class="video-box mt">
+      <img src="/video_feed" alt="camera feed" id="cam">
+    </div>
+    <p class="muted small mt">
+      {% if st.error %}<span style="color:var(--bad)">⚠ {{ st.error }}</span>
+      {% else %}Point the camera at the black bull; new holes are scored automatically.{% endif %}
+    </p>
+    <div class="row mt">
+      <span class="badge green">calibrated</span>
+      <span class="small muted">
+        {% if st.calibration %}
+        centre ({{ '%.0f' % st.calibration.cx }}, {{ '%.0f' % st.calibration.cy }}) px &middot;
+        {{ '%.2f' % st.calibration.scale_px_per_mm }} px/mm
+        {% endif %}
+      </span>
+      <button class="warn" onclick="recalibrate()">Re-calibrate target</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="row" style="justify-content:space-between">
+      <span>Shot <strong id="shotCount">{{ st.shot_count }}/{{ st.shots_per_game }}</strong></span>
+      <span>X: <strong id="xcnt">{{ st.x_count }}</strong></span>
+      <span class="big-total" id="total">{{ '%.1f' % st.total }}</span>
+    </div>
+    <div class="shot-grid mt" id="shotGrid">
+      {% for n in range(1, cfg.SHOTS_PER_GAME + 1) %}
+      <div class="shot-slot {% if st.shot_count >= n and st.shots[n-1].is_x %}x{% endif %}" data-n="{{ n }}">
+        <div class="no">#{{ n }}</div>
+        <div class="val">
+          {% if st.shot_count >= n %}{{ '%.1f' % st.shots[n-1].score }}{% else %}-{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div id="currentShot">
+    {% if st.current_shot %}
+    <div class="current-shot mt">
+      <h3 class="mt">Current shot</h3>
+      <table>
+        <tbody>
+          <tr><td>Shot number</td><td>{{ st.current_shot.shot_no }}</td></tr>
+          <tr><td>X</td><td>{% if st.current_shot.x_mm is not none %}{{ '%.1f' % st.current_shot.x_mm }} mm{% else %}&mdash;{% endif %}</td></tr>
+          <tr><td>Y</td><td>{% if st.current_shot.y_mm is not none %}{{ '%.1f' % st.current_shot.y_mm }} mm{% else %}&mdash;{% endif %}</td></tr>
+          <tr><td>Distance</td><td>{% if st.current_shot.distance_mm is not none %}{{ '%.1f' % st.current_shot.distance_mm }} mm{% else %}&mdash;{% endif %}</td></tr>
+          <tr><td>Score</td><td class="big">{{ '%.1f' % st.current_shot.score }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+    </div>
+
+    <div id="prevShots">
+    {% if st.shots %}
+    <div class="previous-shots mt">
+      <h3 class="mt">Previous shots</h3>
+      <table>
+        <thead>
+          <tr><th>#</th><th>X (mm)</th><th>Y (mm)</th><th>Dist (mm)</th><th>Score</th></tr>
+        </thead>
+        <tbody>
+          {% for s in st.shots %}
+          <tr>
+            <td>{{ s.shot_no }}</td>
+            <td>{% if s.x_mm is not none %}{{ '%.1f' % s.x_mm }}{% else %}&mdash;{% endif %}</td>
+            <td>{% if s.y_mm is not none %}{{ '%.1f' % s.y_mm }}{% else %}&mdash;{% endif %}</td>
+            <td>{% if s.distance_mm is not none %}{{ '%.1f' % s.distance_mm }}{% else %}&mdash;{% endif %}</td>
+            <td>{{ '%.1f' % s.score }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+    </div>
+
+    <h3 class="mt">Manual fallback <span class="muted small">(if auto missed a shot)</span></h3>
+    <div class="row">
+      <input id="quickScore" type="number" step="0.1" min="0" max="10.9" placeholder="Score 0-10.9">
+      <button class="green" onclick="quickAdd()">Add shot</button>
+    </div>
+
+    <h3 class="mt">Events</h3>
+    <ul>
+      {% for ev in st.events %}<li class="muted small">{{ ev.text }}</li>{% endfor %}
+    </ul>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function fmt(v) { return (v === null || v === undefined || isNaN(v)) ? '—' : Number(v).toFixed(1); }
+
+async function refresh() {
+  const s = await (await fetch('/api/state')).json();
+  const totalEl = document.getElementById('total');
+  if (totalEl) totalEl.textContent = fmt(s.total);
+  const cntEl = document.getElementById('shotCount');
+  if (cntEl) cntEl.textContent = `${s.shot_count}/${s.shots_per_game}`;
+  const xEl = document.getElementById('xcnt');
+  if (xEl) xEl.textContent = s.x_count;
+
+  const grid = document.getElementById('shotGrid');
+  if (grid) {
+    grid.querySelectorAll('.shot-slot').forEach(slot => {
+      const n = Number(slot.dataset.n);
+      const sh = s.shots.find(x => x.shot_no === n);
+      slot.classList.toggle('x', !!(sh && sh.is_x));
+      slot.querySelector('.val').textContent = sh ? fmt(sh.score) : '-';
+    });
+  }
+  const cur = document.getElementById('currentShot');
+  if (cur) {
+    const cs = s.current_shot;
+    cur.innerHTML = cs ? `<div class="current-shot mt"><h3 class="mt">Current shot</h3><table><tbody>
+      <tr><td>Shot number</td><td>${cs.shot_no}</td></tr>
+      <tr><td>X</td><td>${fmt(cs.x_mm)} mm</td></tr>
+      <tr><td>Y</td><td>${fmt(cs.y_mm)} mm</td></tr>
+      <tr><td>Distance</td><td>${fmt(cs.distance_mm)} mm</td></tr>
+      <tr><td>Score</td><td class="big">${fmt(cs.score)}</td></tr>
+    </tbody></table></div>` : '';
+  }
+  const prev = document.getElementById('prevShots');
+  if (prev) {
+    prev.innerHTML = s.shots.length ? `<div class="previous-shots mt"><h3 class="mt">Previous shots</h3>
+      <table><thead><tr><th>#</th><th>X (mm)</th><th>Y (mm)</th><th>Dist (mm)</th><th>Score</th></tr></thead>
+      <tbody>${s.shots.map(x => `<tr><td>${x.shot_no}</td><td>${fmt(x.x_mm)}</td><td>${fmt(x.y_mm)}</td><td>${fmt(x.distance_mm)}</td><td>${fmt(x.score)}</td></tr>`).join('')}</tbody></table></div>` : '';
+  }
+  const badges = document.querySelectorAll('.status-item .badge');
+  if (badges.length === 4) {
+    badges[0].className = 'badge ' + (s.camera ? 'green' : 'warn');
+    badges[0].textContent = 'CAMERA: ' + (s.camera ? 'CONNECTED' : 'NO CAMERA');
+    badges[1].className = 'badge ' + (s.target_detected ? 'green' : 'warn');
+    badges[1].textContent = 'TARGET: ' + (s.target_detected ? 'DETECTED' : 'SEARCHING');
+    badges[2].className = 'badge ' + (s.calibration_complete ? 'green' : 'warn');
+    badges[2].textContent = 'CALIBRATION: ' + (s.calibration_complete ? 'COMPLETE' : 'PENDING');
+    badges[3].className = 'badge ' + (s.status === 'READY' ? 'green' : 'warn');
+    badges[3].textContent = 'STATUS: ' + s.status;
+  }
+}
+setInterval(refresh, 1000);
+refresh();
+
+async function quickAdd() {
+  const v = parseFloat(document.getElementById('quickScore').value);
+  if (isNaN(v)) return alert('Enter a score');
+  const r = await api('/api/shot', { score: v });
+  if (!r.ok) return alert(r.error || 'Failed');
+  location.reload();
+}
+async function startNewGame() {
+  const r = await api('/api/start_game', {});
+  if (!r.ok) return alert(r.error || 'Failed');
+  location.reload();
+}
+async function clearUser() {
+  await api('/api/clear_user', {});
+  location.reload();
+}
+async function recalibrate() {
+  await api('/api/reset_calibration', {});
+  location.reload();
+}
+</script>
+{% endblock %}

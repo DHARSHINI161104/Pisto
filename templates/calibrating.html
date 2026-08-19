@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Calibrating Target - Rifle Score Display{% endblock %}
+
+{% block content %}
+<h2>Calibration <span class="muted small">(step 1 of 2)</span></h2>
+
+<div class="panel status-panel">
+  <div class="status-grid">
+    <div class="status-item">
+      <span class="badge {% if st.camera %}green{% else %}warn{% endif %}">
+        CAMERA: {% if st.camera %}CONNECTED{% else %}NO CAMERA{% endif %}
+      </span>
+    </div>
+    <div class="status-item">
+      <span class="badge {% if st.target_detected %}green{% else %}warn{% endif %}">
+        TARGET: {% if st.target_detected %}DETECTED{% else %}SEARCHING{% endif %}
+      </span>
+    </div>
+    <div class="status-item">
+      <span class="badge {% if st.calibration_complete %}green{% else %}warn{% endif %}">
+        CALIBRATION: {% if st.calibration_complete %}COMPLETE{% else %}PENDING{% endif %}
+      </span>
+    </div>
+    <div class="status-item">
+      <span class="badge {% if st.status == 'READY' %}green{% else %}warn{% endif %}">
+        STATUS: {{ st.status }}
+      </span>
+    </div>
+  </div>
+</div>
+
+<div class="grid grid-2">
+  <div class="panel">
+    <div class="row" style="justify-content:space-between">
+      <div>
+        <strong>{{ st.user.name }}</strong> <span class="muted small">({{ st.user.id }})</span>
+      </div>
+      <button class="red" onclick="clearUser()">Change shooter</button>
+    </div>
+    <div class="video-box mt">
+      <img src="/video_feed" alt="calibration camera feed">
+    </div>
+    <p class="muted small mt">
+      {% if st.error %}
+      <span style="color:var(--bad)">⚠ {{ st.error }}</span>
+      {% else %}
+      Aim the camera at the black bull of the target. A crosshair and the
+      scoring rings are drawn once the target is found. Keep the camera and
+      target still until the status below turns green.
+      {% endif %}
+    </p>
+  </div>
+
+  <div class="panel">
+    <h3>Calibration status</h3>
+    <div class="row">
+      <span class="badge {% if st.calibration and st.calibration.state == 'ready' %}green{% else %}warn{% endif %}">
+        {{ st.calibration.state if st.calibration else 'searching' }}
+      </span>
+    </div>
+    {% if st.calibration %}
+    <table class="mt">
+      <tbody>
+        <tr><td>Target centre</td><td>({{ '%.1f' % st.calibration.cx }}, {{ '%.1f' % st.calibration.cy }}) px</td></tr>
+        <tr><td>Scale</td><td>{{ '%.3f' % st.calibration.scale_px_per_mm }} px/mm</td></tr>
+        <tr><td>Perspective aspect</td><td>{{ '%.3f' % st.calibration.aspect }}</td></tr>
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">Waiting for the target to appear in the camera view...</p>
+    {% endif %}
+    <p class="small muted mt">
+      Once stable for a moment, the app automatically switches to live shot
+      scoring. No shots are counted during calibration.
+    </p>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function clearUser() {
+  await api('/api/clear_user', {});
+  location.reload();
+}
+</script>
+{% endblock %}

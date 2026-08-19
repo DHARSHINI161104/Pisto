@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Runtime logs and generated output
+*.log
+results/*.csv
+results/*.png
+
+# Local database / app data
+*.db

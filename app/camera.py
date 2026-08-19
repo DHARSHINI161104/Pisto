@@ -95,6 +95,19 @@ def available():
     return _available
 
 
+def release():
+    """Release the camera if open. Safe to call any time."""
+    global _impl, _available, _last_frame
+    if _impl is not None:
+        try:
+            _impl.release()
+        except Exception:
+            pass
+        _impl = None
+        _available = False
+        _last_frame = None
+
+
 def read_frame():
     """Return the latest camera frame as a BGR numpy array (or None)."""
     if _impl is None or not _available:

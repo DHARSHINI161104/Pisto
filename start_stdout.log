@@ -1,0 +1,7 @@
+
+  Rifle score display running: http://0.0.0.0:5000
+  Scoreboard:  /display   |  Print target:  /print/target
+  Today's results: /results/today
+
+ * Serving Flask app 'app.server'
+ * Debug mode: off

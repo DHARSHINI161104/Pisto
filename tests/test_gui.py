@@ -70,6 +70,69 @@ def test_session_clear_and_reset():
     assert s.total() == 0.0
 
 
+def test_session_rejects_same_shot_duplicate():
+    """Re-detecting the same hole must never create a second history entry."""
+    s = GuiSession()
+    first = s.add_shot(10.0, 0.0)
+    assert first is not None
+    assert s.add_shot(10.0, 0.0) is None      # identical position
+    assert s.add_shot(10.4, 0.4) is None      # still within separation tolerance
+    assert len(s.shots) == 1
+
+
+def test_session_accepts_distinct_shots():
+    s = GuiSession()
+    assert s.add_shot(0.0, 0.0) is not None
+    assert s.add_shot(0.0, 20.0) is not None  # far enough apart = new shot
+    assert len(s.shots) == 2
+
+
+def test_session_ten_shot_limit_marks_complete():
+    s = GuiSession()
+    for _ in range(10):
+        s.add_demo_shot()
+    assert len(s.shots) == 10
+    assert s.round_complete is True
+    assert s.system_state == "COMPLETE"
+    # Shot 11 must be rejected and history/total preserved.
+    assert s.add_demo_shot() is None
+    assert len(s.shots) == 10
+    assert s.total() == pytest.approx(sum(sh.score for sh in s.shots))
+
+
+def test_next_player_starts_fresh_round():
+    s = GuiSession()
+    for _ in range(10):
+        s.add_demo_shot()
+    s.next_player()
+    assert s.player == "PLAYER 02"
+    assert s.shots == []
+    assert s.total() == 0.0
+    assert s.round_complete is False
+    assert s.system_state == "READY"
+    shot = s.add_demo_shot()
+    assert shot.shot_no == 1
+
+
+def test_next_player_increments_players():
+    s = GuiSession()
+    s.next_player()
+    assert s.player == "PLAYER 02"
+    s.next_player()
+    assert s.player == "PLAYER 03"
+
+
+def test_reset_match_returns_to_player_01():
+    s = GuiSession()
+    s.next_player()                       # now PLAYER 02
+    for _ in range(5):
+        s.add_demo_shot()
+    s.reset_match()
+    assert s.player == "PLAYER 01"
+    assert s.shots == []
+    assert s.round_complete is False
+
+
 def test_demo_coordinate_inside_scoring_area():
     rng = random.Random(42)
     for _ in range(200):

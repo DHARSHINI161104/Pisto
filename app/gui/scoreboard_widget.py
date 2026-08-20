@@ -91,6 +91,9 @@ class ScoreboardWidget(QWidget):
         """)
 
     def refresh(self, session):
+        self.player_label.setText(session.player)
+        self.session_label.setText(session.session_label)
+
         shot = session.current_shot()
         if shot is None:
             self.current_shot.setText("--")

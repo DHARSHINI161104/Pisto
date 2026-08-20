@@ -78,6 +78,10 @@ class MainWindow(QMainWindow):
         self.reset_act.triggered.connect(self.session.reset_match)
         bar.addAction(self.reset_act)
 
+        self.next_act = QAction("NEXT", self)
+        self.next_act.triggered.connect(self.session.next_player)
+        bar.addAction(self.next_act)
+
         bar.addSeparator()
 
         self.show_camera_act = QAction("Show Camera", self)
@@ -120,6 +124,8 @@ class MainWindow(QMainWindow):
         self.add_demo_act.setEnabled(not live)
         self.mode_act.setText("Demo Mode" if live else "Use Camera")
         self.show_camera_act.setEnabled(live)
+        # The round ends after shot 10; NEXT starts the next player.
+        self.next_act.setEnabled(self.session.round_complete)
 
     # ------------------------------------------------------------- camera --
     def _start_camera(self, force_demo):

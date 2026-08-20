@@ -26,6 +26,9 @@ class AppState:
         self.calibration = None
         self.detector = None
         self.calibration_state = "none"   # 'none' | 'searching' | 'ready'
+        self.player_no = 1             # running PLAYER xx counter for the session
+        self.player = "PLAYER 01"
+        self.round_complete = False    # True once the 10th shot is recorded
         self.events = []               # recent events: {ts, text, score?}
         self.overlay_jpeg = None       # latest processed view (JPEG bytes)
         self.pipeline_error = None
@@ -84,7 +87,12 @@ class AppState:
             return True
 
     def add_manual_shot(self, mm_x=None, mm_y=None, score=None):
-        """Record one shot in the active game. Returns the updated shot dict."""
+        """Record one shot in the active game. Returns the updated shot dict.
+
+        In camera scoring mode a shot whose position is effectively the same as
+        the previous shot is treated as a re-detection of the same hole and is
+        rejected - one physical shot never creates two entries.
+        """
         with self.lock:
             if self.active_game_id is None:
                 raise ValueError("No active user selected.")
@@ -93,6 +101,13 @@ class AppState:
             if shot_no > config.SHOTS_PER_GAME:
                 db.finish_game(self.active_game_id)
                 raise ValueError("Game already complete (10 shots). Start a new game.")
+            if mm_x is not None and mm_y is not None and self.mode == MODE_SHOOTING:
+                last = game["shots"][-1] if game["shots"] else None
+                if last is not None and last["x_mm"] is not None \
+                        and last["y_mm"] is not None:
+                    d = math.hypot(mm_x - last["x_mm"], mm_y - last["y_mm"])
+                    if d < config.HOLE_MIN_SEPARATION_MM:
+                        raise ValueError("Shot already recorded - duplicate.")
             if score is None:
                 score = score_from_distance((mm_x ** 2 + mm_y ** 2) ** 0.5)
             score = round(float(score), 1)
@@ -103,7 +118,9 @@ class AppState:
                     "x_mm": mm_x, "y_mm": mm_y}
             if shot_no == config.SHOTS_PER_GAME:
                 db.finish_game(self.active_game_id)
-                self.log(f"Game complete: total {self.game_total():.1f}")
+                self.round_complete = True
+                self.log(f"{self.player} round complete: total {self.game_total():.1f}. "
+                         "Press NEXT for the next player.")
             self.refresh_game()
             return shot
 
@@ -144,6 +161,28 @@ class AppState:
             self.log(f"New game started for {self.active_user['name']}.")
             return self.game
 
+    def next_player(self):
+        """Advance to the next player after a completed round.
+
+        Finishes the current game, clears the scoreboard and starts a fresh
+        round for the next player (PLAYER 01 -> PLAYER 02 -> ...). The next
+        player always starts at shot 1 with total 0.0 and an empty history.
+        """
+        with self.lock:
+            if self.active_user is None:
+                self.ensure_session()
+            if self.active_game_id and self.game:
+                db.finish_game(self.active_game_id)
+            self.player_no += 1
+            self.player = f"PLAYER {self.player_no:02d}"
+            self.round_complete = False
+            gid = db.start_game(self.active_user["id"])
+            self.active_game_id = gid
+            self.game = db.game_with_shots(gid)
+            self.log(f"{self.player} ({self.active_user['name']}) - new round. "
+                     "Waiting for shot 1.")
+            return self.game
+
     # ------------------------------------------------------------ summary --
     def calibration_info(self):
         """Serialisable summary of the current target calibration."""
@@ -168,6 +207,8 @@ class AppState:
                                 and self.calibration_state == "ready")
         if calibration_complete:
             status = "READY"
+        elif self.round_complete:
+            status = "COMPLETE"
         elif self.mode == MODE_CALIBRATING:
             status = "CALIBRATING"
         elif self.mode == MODE_MANUAL:
@@ -198,6 +239,8 @@ class AppState:
             return {
                 "mode": self.mode,
                 "user": self.active_user,
+                "player": self.player,
+                "round_complete": self.round_complete,
                 "game_id": self.active_game_id,
                 "shots": shots,
                 "shot_count": len(shots),

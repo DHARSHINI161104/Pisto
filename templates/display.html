@@ -12,6 +12,7 @@
       <span class="disp-title">TARGET</span>
       <div class="row">
         <button class="green" id="btnCalibrate" onclick="calibrate()">Calibrate Target</button>
+        <button class="red" id="btnNext" onclick="nextPlayer()">NEXT</button>
         <span class="hint">press ENTER to capture a shot</span>
         <div class="toggles">
           <label class="toggle"><input type="checkbox" id="tglCamera" checked> <span>Show Camera</span></label>
@@ -24,7 +25,7 @@
     <div class="target-stage">
       <div id="targetWrap">{{ target_svg | safe }}</div>
       <div id="cameraWrap">
-        <img src="/video_feed" alt="live camera">
+        <img id="cameraImg" src="/video_feed" alt="live camera">
         <div id="calBanner" class="cal-banner muted">NOT CALIBRATED</div>
       </div>
     </div>
@@ -86,6 +87,35 @@
 
 {% block scripts %}
 <script>
+/* Standalone desktop bridge (used when running inside the desktop GUI).
+   Falls back to the HTTP API when the page is served by the web server. */
+function fetchState() {
+  return fetch('/api/state').then(r => r.json());
+}
+function callAction(path, body) {
+  if (window.desktopBridge) {
+    window.desktopBridge.action(path);
+    return Promise.resolve({ ok: true });
+  }
+  return api(path, body);
+}
+function setupDesktopBridge() {
+  if (!window.desktopBridge) return;
+  window.desktopBridge.frameReady.connect(function (b64) {
+    const img = document.getElementById('cameraImg');
+    if (img && b64) img.src = 'data:image/jpeg;base64,' + b64;
+  });
+  window.desktopBridge.stateReady.connect(function (s) {
+    renderState(JSON.parse(s));
+  });
+  window.desktopBridge.actionResult.connect(function (r) {
+    const m = JSON.parse(r);
+    if (m && !m.ok && m.error) alert(m.error);
+  });
+  refresh();
+}
+window.onDesktopBridgeReady = setupDesktopBridge;
+
 const GEOM = GEOMETRY;              // radii_mm / inner_ten_mm / card_mm
 const CARD = GEOM.card_mm;
 const CX = CARD / 2, CY = CARD / 2;
@@ -149,7 +179,7 @@ function renderBanner(s) {
 async function calibrate() {
   const btn = document.getElementById('btnCalibrate');
   if (btn) btn.disabled = true;
-  const r = await api('/api/calibrate', {});
+  const r = await callAction('/api/calibrate', {});
   if (!r.ok) {
     alert(r.error || 'Calibration failed');
     if (btn) btn.disabled = false;
@@ -160,7 +190,17 @@ async function calibrate() {
 }
 
 async function captureShot() {
-  const r = await api('/api/capture', {});
+  if (window._st && window._st.round_complete) {
+    alert('Round complete - press NEXT for the next player.');
+    return;
+  }
+  const r = await callAction('/api/capture', {});
+  if (!r.ok && r.error) alert(r.error);
+  refresh();
+}
+
+async function nextPlayer() {
+  const r = await callAction('/api/next_player', {});
   if (!r.ok && r.error) alert(r.error);
   refresh();
 }
@@ -173,28 +213,33 @@ document.addEventListener('keydown', (e) => {
   captureShot();
 });
 
-function refresh() {
-  fetch('/api/state').then(r => r.json()).then(s => {
+function renderState(s) {
+    window._st = s;
     // status strip
     setStatus('stCam', s.camera ? 'CONNECTED' : 'DISCONNECTED', s.camera);
     setStatus('stTarget', s.target_detected ? 'DETECTED' : 'NOT DETECTED', s.target_detected);
     setStatus('stCal', s.calibration_complete ? 'READY'
                   : (s.status === 'CALIBRATING' ? 'CALIBRATING' : 'REQUIRED'),
               s.calibration_complete);
-    setStatus('stScore', s.status === 'READY' ? 'ACTIVE' : s.status, s.status === 'READY');
+    setStatus('stScore', s.round_complete ? 'COMPLETE'
+                  : (s.status === 'READY' ? 'ACTIVE' : s.status),
+              s.round_complete || s.status === 'READY');
 
     renderBanner(s);
+    if (s.round_complete) {
+      const b = document.getElementById('calBanner');
+      if (b) {
+        b.classList.remove('ok', 'bad', 'warn', 'muted');
+        b.classList.add('ok');
+        b.textContent = 'ROUND COMPLETE - PRESS NEXT';
+      }
+    }
 
     // player / session
     const nameEl = document.getElementById('playerName');
     const idEl = document.getElementById('playerId');
-    if (s.user) {
-      nameEl.textContent = s.user.name;
-      idEl.textContent = s.user.id;
-    } else {
-      nameEl.textContent = 'Waiting for shooter...';
-      idEl.textContent = 'scan a QR card to begin';
-    }
+    nameEl.textContent = s.player || 'PLAYER 01';
+    idEl.textContent = s.user ? s.user.name : 'scan a QR card to begin';
     document.getElementById('session').textContent =
       s.session && s.session.date ? `${s.session.date}  #${s.session.game_id}` : '--';
 
@@ -209,7 +254,9 @@ function refresh() {
     const shotPos = document.getElementById('shotPos');
     if (cs) {
       curScore.textContent = fmt(cs.score);
-      curInfo.textContent = `Shot ${cs.shot_no} of ${s.shots_per_game}`;
+      curInfo.textContent = s.round_complete
+        ? 'ROUND COMPLETE - press NEXT'
+        : `Shot ${cs.shot_no} of ${s.shots_per_game}`;
       shotPos.textContent = `X=${fmt(cs.x_mm)} mm  Y=${fmt(cs.y_mm)} mm  D=${fmt(cs.distance_mm)} mm`;
     } else {
       curScore.textContent = '--';
@@ -238,7 +285,10 @@ function refresh() {
       .map(e => `<div class="ev">${e.text.replace(/</g, '&lt;')}</div>`).join('');
 
     renderMarkers(s.shots);
-  }).catch(() => {});
+}
+
+function refresh() {
+  fetchState().then(renderState).catch(() => {});
 }
 
 // --- toggles ----------------------------------------------------------

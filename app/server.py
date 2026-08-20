@@ -24,6 +24,77 @@ MODE_TO_TEMPLATE = {
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def calibrate_state():
+    """Start target detection + calibration on the shared state.
+
+    A Guest scoring session is created automatically when no shooter is
+    selected, so the calibrated target scores shots immediately. Used by both
+    the web API route and the standalone desktop display GUI.
+    """
+    st = state.STATE
+    from app import camera
+    if not camera.available():
+        return ({"ok": False,
+                 "error": "No camera connected - connect a webcam to detect "
+                          "and calibrate the target."}, 400)
+    st.ensure_session()
+    st.calibration = None
+    st.detector = None
+    st.calibration_state = "none"
+    st.pending_qr_id = None
+    st.set_mode(state.MODE_CALIBRATING)
+    st.log("Calibration started - keep the target board still in view.")
+    return {"ok": True, "state": st.public_state()}, 200
+
+
+def capture_state():
+    """Capture the current camera frame, detect the new hole, score it.
+
+    The display panel calls this when the operator presses Enter. If the target
+    is not calibrated yet, the first press detects it and primes the detector
+    (a Guest session is created automatically); later presses score each new
+    hole on the target. Used by both the web API route and the standalone
+    desktop display GUI.
+    """
+    st = state.STATE
+    from app import camera
+    if not camera.available():
+        return ({"ok": False,
+                 "error": "No camera connected - connect a webcam to capture "
+                          "and score shots."}, 400)
+    st.ensure_session()
+    frame = camera.last_frame()
+    if frame is None:
+        return {"ok": False, "error": "No camera frame available yet."}, 400
+
+    if st.calibration is None or st.detector is None:
+        cal = calibration.detect_target(frame)
+        if cal is None:
+            st.pipeline_error = ("Target not found - aim the camera at the "
+                                 "black bull and keep it still.")
+            return {"ok": False,
+                    "error": "Target not found in view - aim the camera at "
+                             "the target."}, 400
+        st.calibration = cal
+        st.detector = ShotDetector(cal)
+        warped = cal.warp(frame)
+        st.detector.set_reference(cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY))
+        st.calibration_state = "ready"
+        st.set_mode(state.MODE_SHOOTING)
+        st.log("Target calibrated - press Enter after each shot.")
+        return {"ok": True, "primed": True, "state": st.public_state()}, 200
+
+    warped = st.calibration.warp(frame)
+    warped_gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
+    new_holes = st.detector.capture(warped_gray)
+    shots = []
+    for mm_x, mm_y in new_holes:
+        shots.append(st.add_manual_shot(mm_x=mm_x, mm_y=mm_y))
+    if not shots:
+        st.log("Capture: no new hole detected.")
+    return {"ok": True, "shots": shots, "state": st.public_state()}, 200
+
+
 def create_app():
     app = Flask(__name__,
                 template_folder=os.path.join(_ROOT, "templates"),
@@ -134,6 +205,15 @@ def create_app():
         except ValueError as e:
             return jsonify({"ok": False, "error": str(e)}), 400
 
+    @app.post("/api/next_player")
+    def api_next_player():
+        try:
+            game = state.STATE.next_player()
+            return jsonify({"ok": True, "game": game,
+                            "state": state.STATE.public_state()})
+        except ValueError as e:
+            return jsonify({"ok": False, "error": str(e)}), 400
+
     @app.post("/api/shot")
     def api_shot():
         data = request.get_json(silent=True) or request.form
@@ -162,82 +242,13 @@ def create_app():
 
     @app.post("/api/calibrate")
     def api_calibrate():
-        """Start target detection + calibration from the display panel.
-
-        A Guest scoring session is created automatically when no shooter is
-        selected, so the calibrated target scores shots immediately.
-        """
-        st = state.STATE
-        try:
-            from app import camera
-            if not camera.available():
-                return jsonify({"ok": False,
-                                "error": "No camera connected - connect a webcam "
-                                         "to detect and calibrate the target."}), 400
-            st.ensure_session()
-            st.calibration = None
-            st.detector = None
-            st.calibration_state = "none"
-            st.pending_qr_id = None
-            st.set_mode(state.MODE_CALIBRATING)
-            st.log("Calibration started - keep the target board still in view.")
-            return jsonify({"ok": True, "state": st.public_state()})
-        except ValueError as e:
-            return jsonify({"ok": False, "error": str(e)}), 400
+        payload, status = calibrate_state()
+        return jsonify(payload), status
 
     @app.post("/api/capture")
     def api_capture():
-        """Capture the current camera frame, detect the new hole, score it.
-
-        The display panel calls this when the operator presses Enter. If the
-        target is not calibrated yet, the first press detects it and primes the
-        detector (a Guest session is created automatically); later presses score
-        each new hole on the target.
-        """
-        st = state.STATE
-        try:
-            from app import camera
-            if not camera.available():
-                return jsonify({"ok": False,
-                                "error": "No camera connected - connect a webcam "
-                                         "to capture and score shots."}), 400
-            st.ensure_session()
-            frame = camera.last_frame()
-            if frame is None:
-                return jsonify({"ok": False,
-                                "error": "No camera frame available yet."}), 400
-
-            if st.calibration is None or st.detector is None:
-                cal = calibration.detect_target(frame)
-                if cal is None:
-                    st.pipeline_error = ("Target not found - aim the camera at "
-                                         "the black bull and keep it still.")
-                    return jsonify({"ok": False,
-                                    "error": "Target not found in view - aim "
-                                             "the camera at the target."}), 400
-                st.calibration = cal
-                st.detector = ShotDetector(cal)
-                warped = cal.warp(frame)
-                st.detector.set_reference(
-                    cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY))
-                st.calibration_state = "ready"
-                st.set_mode(state.MODE_SHOOTING)
-                st.log("Target calibrated - press Enter after each shot.")
-                return jsonify({"ok": True, "primed": True,
-                                "state": st.public_state()})
-
-            warped = st.calibration.warp(frame)
-            warped_gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
-            new_holes = st.detector.capture(warped_gray)
-            shots = []
-            for mm_x, mm_y in new_holes:
-                shots.append(st.add_manual_shot(mm_x=mm_x, mm_y=mm_y))
-            if not shots:
-                st.log("Capture: no new hole detected.")
-            return jsonify({"ok": True, "shots": shots,
-                            "state": st.public_state()})
-        except ValueError as e:
-            return jsonify({"ok": False, "error": str(e)}), 400
+        payload, status = capture_state()
+        return jsonify(payload), status
 
     @app.post("/api/clear_user")
     def api_clear_user():

@@ -78,6 +78,13 @@ CAMERA_WIDTH = 1280
 CAMERA_HEIGHT = 720
 CAMERA_FPS = 20
 
+# --- Demo camera ---
+# When no real camera is detected and RIFLE_DEMO_CAMERA=1 is set, a synthetic
+# target is rendered so the display panel can show the live OpenCV view and
+# exercise the scoring flow without a webcam. A new hole is punched on the
+# synthetic target every DEMO_SHOT_INTERVAL seconds and scored automatically.
+DEMO_SHOT_INTERVAL = 2.5        # seconds between injected demo shots
+
 # --- Server ---
 HOST = "0.0.0.0"
 PORT = 5000

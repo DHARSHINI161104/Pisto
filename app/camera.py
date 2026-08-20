@@ -5,9 +5,13 @@ OpenCV) and on Windows (USB webcam via OpenCV). When no camera is available the
 app keeps running in manual-entry mode only.
 """
 
+import math
 import os
+import random
 import time
 import threading
+
+import cv2
 
 import config
 
@@ -66,6 +70,45 @@ class _Picamera2Backend:
             self.picam.stop()
 
 
+def _demo_hole():
+    """Random shot position (mm) inside the scoring area for the demo camera."""
+    radius = config.MAX_SCORING_RADIUS_MM * 0.9 * math.sqrt(random.random())
+    angle = random.uniform(0.0, 2.0 * math.pi)
+    return radius * math.cos(angle), radius * math.sin(angle)
+
+
+class _DemoBackend:
+    """Synthetic camera: renders the ISSF target so the display panel can run
+    and show the live OpenCV view without a real webcam.
+
+    A new pellet hole is punched every DEMO_SHOT_INTERVAL seconds; the normal
+    pipeline then detects it exactly like a real shot (one hole = one score).
+    """
+
+    name = "demo"
+
+    def __init__(self):
+        self._holes = []
+        self._last_hole_at = 0.0
+        self._frame = None
+
+    def read(self):
+        from app.detection import generate_synthetic_target
+        now = time.time()
+        if now - self._last_hole_at >= config.DEMO_SHOT_INTERVAL:
+            self._holes.append(_demo_hole())
+            self._last_hole_at = now
+            self._frame = None
+        if self._frame is None:
+            gray, _ = generate_synthetic_target(
+                side=config.CAMERA_HEIGHT, holes_mm=self._holes)
+            self._frame = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        return self._frame
+
+    def release(self):
+        pass
+
+
 def _open_camera():
     """Try picamera2 first (Pi 5), then a generic OpenCV capture."""
     try:
@@ -79,7 +122,11 @@ def _open_camera():
 
 
 def start():
-    """Open the camera if possible. Safe to call more than once."""
+    """Open the camera if possible. Safe to call more than once.
+
+    When RIFLE_DEMO_CAMERA=1 and no real camera is present, a synthetic demo
+    target is used so the display can still show the live OpenCV view.
+    """
     global _impl, _available
     if _impl is not None:
         return _available
@@ -88,6 +135,20 @@ def start():
         return _available
     _impl = _open_camera()
     _available = _impl is not None and _impl._ok
+    if _available:
+        # A capture can be "opened" yet deliver no frames (e.g. a dead
+        # device); treat that the same as having no camera.
+        probe = _impl.read()
+        if probe is None:
+            try:
+                _impl.release()
+            except Exception:
+                pass
+            _impl = None
+            _available = False
+    if not _available and os.environ.get("RIFLE_DEMO_CAMERA"):
+        _impl = _DemoBackend()
+        _available = True
     return _available
 
 

@@ -60,8 +60,30 @@ def test_api_state_returns_200_with_display_fields():
     js = client.get("/api/state").get_json()
     assert js is not None
     for key in ("shots", "current_shot", "status", "session",
-                "target_detected", "calibration_complete", "camera"):
+                "target_detected", "calibration_complete", "camera",
+                "player", "round_complete"):
         assert key in js
+
+
+def test_api_next_player_clears_round_for_next_player():
+    app = create_app()
+    client = app.test_client()
+    client.post("/api/select_user", json={"user_id": "CLUB-001", "name": "Alice"})
+    for _ in range(config.SHOTS_PER_GAME):
+        resp = client.post("/api/shot", json={"score": 9.0})
+        assert resp.status_code == 200
+    state_after = client.get("/api/state").get_json()
+    assert state_after["round_complete"] is True
+    assert state_after["shot_count"] == config.SHOTS_PER_GAME
+
+    resp = client.post("/api/next_player")
+    assert resp.status_code == 200
+    js = resp.get_json()
+    assert js["ok"] is True
+    assert js["state"]["player"] == "PLAYER 02"
+    assert js["state"]["round_complete"] is False
+    assert js["state"]["shot_count"] == 0
+    assert js["state"]["total"] == 0.0
 
 
 def test_api_calibrate_requires_camera():

@@ -142,7 +142,11 @@ def start():
         return
     thread = threading.Thread(target=_run, daemon=True, name="camera-pipeline")
     thread.start()
-    state.STATE.log(f"Camera ready ({camera.backend_name()}).")
+    if camera.backend_name() == "demo":
+        state.STATE.log("Demo camera active (no real camera detected) - "
+                        "synthetic target view.")
+    else:
+        state.STATE.log(f"Camera ready ({camera.backend_name()}).")
 
 
 def stop():

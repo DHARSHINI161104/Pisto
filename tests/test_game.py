@@ -115,3 +115,45 @@ def test_ensure_session_reuses_selected_user():
     assert st.ensure_session() is True
     assert st.active_user["id"] == "CLUB-001"
     assert st.active_game_id == game_id
+
+
+def test_round_complete_after_ten_shots():
+    st = _fresh_state()
+    st.ensure_session()
+    assert st.player == "PLAYER 01"
+    assert st.round_complete is False
+    for _ in range(config.SHOTS_PER_GAME):
+        st.add_manual_shot(score=10.0)
+    assert st.round_complete is True
+    assert len(st.game["shots"]) == 10
+    # Shot 11 is rejected even on the detected-shot path.
+    st.mode = state.MODE_SHOOTING
+    st.add_detected_shot(3.0, 3.0)
+    assert len(st.game["shots"]) == 10
+    with pytest.raises(ValueError):
+        st.add_manual_shot(score=10.0)
+
+
+def test_next_player_starts_clean_round():
+    st = _fresh_state()
+    st.ensure_session()
+    for _ in range(config.SHOTS_PER_GAME):
+        st.add_manual_shot(score=9.0)
+    st.next_player()
+    assert st.player == "PLAYER 02"
+    assert st.round_complete is False
+    assert len(st.game["shots"]) == 0
+    assert st.game_total() == 0.0
+    pub = st.public_state()
+    assert pub["player"] == "PLAYER 02"
+    assert pub["round_complete"] is False
+    assert pub["shot_count"] == 0
+    assert pub["total"] == 0.0
+
+
+def test_next_player_advances_counter():
+    st = _fresh_state()
+    st.ensure_session()
+    st.next_player()
+    st.next_player()
+    assert st.player == "PLAYER 03"

@@ -10,10 +10,13 @@
   <section class="target-panel">
     <div class="disp-toolbar">
       <span class="disp-title">TARGET</span>
-      <div class="toggles">
-        <label class="toggle"><input type="checkbox" id="tglCamera" checked> <span>Show Camera</span></label>
-        <label class="toggle"><input type="checkbox" id="tglGeo" checked> <span>Show Target Geometry</span></label>
-        <label class="toggle"><input type="checkbox" id="tglMarkers" checked> <span>Show Shot Markers</span></label>
+      <div class="row">
+        <button class="green" id="btnCalibrate" onclick="calibrate()">Calibrate Target</button>
+        <div class="toggles">
+          <label class="toggle"><input type="checkbox" id="tglCamera" checked> <span>Show Camera</span></label>
+          <label class="toggle"><input type="checkbox" id="tglGeo" checked> <span>Show Target Geometry</span></label>
+          <label class="toggle"><input type="checkbox" id="tglMarkers" checked> <span>Show Shot Markers</span></label>
+        </div>
       </div>
     </div>
 
@@ -21,6 +24,7 @@
       <div id="targetWrap">{{ target_svg | safe }}</div>
       <div id="cameraWrap">
         <img src="/video_feed" alt="live camera">
+        <div id="calBanner" class="cal-banner muted">NOT CALIBRATED</div>
       </div>
     </div>
   </section>
@@ -112,7 +116,7 @@ function renderMarkers(shots) {
   g.innerHTML = (shots || []).map(s => markerSvg(s, s.shot_no === shots.length)).join('');
 }
 
-// --- scoreboard -------------------------------------------------------
+// --- status + calibration banner ---------------------------------------
 function setStatus(id, text, ok) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -121,13 +125,50 @@ function setStatus(id, text, ok) {
   el.classList.toggle('bad', !ok);
 }
 
+function renderBanner(s) {
+  const b = document.getElementById('calBanner');
+  if (!b) return;
+  b.classList.remove('ok', 'bad', 'muted');
+  if (s.calibration_complete) {
+    b.classList.add('ok');
+    b.textContent = 'TARGET CALIBRATED - SCORING';
+  } else if (s.status === 'CALIBRATING') {
+    b.classList.add('warn');
+    b.textContent = s.target_detected ? 'CALIBRATING - keep target still'
+                                      : 'SEARCHING FOR TARGET...';
+  } else if (!s.camera) {
+    b.classList.add('bad');
+    b.textContent = 'NO CAMERA';
+  } else {
+    b.classList.add('muted');
+    b.textContent = 'NOT CALIBRATED - press Calibrate Target';
+  }
+}
+
+async function calibrate() {
+  const btn = document.getElementById('btnCalibrate');
+  if (btn) btn.disabled = true;
+  const r = await api('/api/calibrate', {});
+  if (!r.ok) {
+    alert(r.error || 'Calibration failed');
+    if (btn) btn.disabled = false;
+    return;
+  }
+  refresh();
+  setTimeout(() => { if (btn) btn.disabled = false; }, 1500);
+}
+
 function refresh() {
   fetch('/api/state').then(r => r.json()).then(s => {
     // status strip
     setStatus('stCam', s.camera ? 'CONNECTED' : 'DISCONNECTED', s.camera);
     setStatus('stTarget', s.target_detected ? 'DETECTED' : 'NOT DETECTED', s.target_detected);
-    setStatus('stCal', s.calibration_complete ? 'READY' : 'REQUIRED', s.calibration_complete);
+    setStatus('stCal', s.calibration_complete ? 'READY'
+                  : (s.status === 'CALIBRATING' ? 'CALIBRATING' : 'REQUIRED'),
+              s.calibration_complete);
     setStatus('stScore', s.status === 'READY' ? 'ACTIVE' : s.status, s.status === 'READY');
+
+    renderBanner(s);
 
     // player / session
     const nameEl = document.getElementById('playerName');

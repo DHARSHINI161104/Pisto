@@ -157,6 +157,31 @@ def create_app():
             st.log("Re-calibrating - keep the target centred in view.")
         return jsonify({"ok": True})
 
+    @app.post("/api/calibrate")
+    def api_calibrate():
+        """Start target detection + calibration from the display panel.
+
+        A Guest scoring session is created automatically when no shooter is
+        selected, so the calibrated target scores shots immediately.
+        """
+        st = state.STATE
+        try:
+            from app import camera
+            if not camera.available():
+                return jsonify({"ok": False,
+                                "error": "No camera connected - connect a webcam "
+                                         "to detect and calibrate the target."}), 400
+            st.ensure_session()
+            st.calibration = None
+            st.detector = None
+            st.calibration_state = "none"
+            st.pending_qr_id = None
+            st.set_mode(state.MODE_CALIBRATING)
+            st.log("Calibration started - keep the target board still in view.")
+            return jsonify({"ok": True, "state": st.public_state()})
+        except ValueError as e:
+            return jsonify({"ok": False, "error": str(e)}), 400
+
     @app.post("/api/clear_user")
     def api_clear_user():
         st = state.STATE

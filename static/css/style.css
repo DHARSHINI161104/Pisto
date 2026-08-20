@@ -212,6 +212,24 @@ th { color: var(--muted); font-weight: 600; }
 }
 #cameraWrap img { display: block; width: 100%; height: auto; }
 
+.cal-banner {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 7px 10px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  background: rgba(13, 17, 23, 0.85);
+  color: var(--muted);
+  border-top: 1px solid #33404f;
+}
+.cal-banner.ok { color: #062; background: rgba(46, 204, 113, 0.92); border-top-color: var(--accent); }
+.cal-banner.warn { color: #222; background: rgba(241, 196, 15, 0.92); border-top-color: var(--warn); }
+.cal-banner.bad { color: #fff; background: rgba(231, 76, 60, 0.92); border-top-color: var(--bad); }
+
 /* ---- scoreboard panel ---- */
 .score-panel {
   background: var(--panel);

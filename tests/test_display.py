@@ -62,3 +62,13 @@ def test_api_state_returns_200_with_display_fields():
     for key in ("shots", "current_shot", "status", "session",
                 "target_detected", "calibration_complete", "camera"):
         assert key in js
+
+
+def test_api_calibrate_requires_camera():
+    # conftest disables the camera, so calibration must refuse cleanly.
+    app = create_app()
+    client = app.test_client()
+    resp = client.post("/api/calibrate")
+    assert resp.status_code == 400
+    assert resp.get_json()["ok"] is False
+    assert "camera" in resp.get_json()["error"].lower()

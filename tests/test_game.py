@@ -93,3 +93,25 @@ def test_results_file_written():
     assert rows[0]["user_id"] == "CLUB-001"
     assert rows[0]["total"] == "90.0"
     assert rows[0]["shots"] == "10"
+
+
+def test_ensure_session_creates_guest():
+    st = _fresh_state()
+    assert st.active_game_id is None
+    assert st.ensure_session() is True
+    assert st.active_user["id"] == state.GUEST_USER_ID
+    assert st.active_user["name"] == state.GUEST_USER_NAME
+    assert st.active_game_id is not None
+    # A second call reuses the same session, not a new game.
+    game_id = st.active_game_id
+    assert st.ensure_session() is True
+    assert st.active_game_id == game_id
+
+
+def test_ensure_session_reuses_selected_user():
+    st = _fresh_state()
+    st.select_user("CLUB-001", "Alice")
+    game_id = st.active_game_id
+    assert st.ensure_session() is True
+    assert st.active_user["id"] == "CLUB-001"
+    assert st.active_game_id == game_id

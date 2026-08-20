@@ -12,6 +12,9 @@ MODE_CALIBRATING = "calibrating"  # detecting the target before scoring starts
 MODE_SHOOTING = "shooting"   # live shot detection for the active user
 MODE_MANUAL = "manual"       # no camera; entry handled by the UI
 
+GUEST_USER_ID = "guest"
+GUEST_USER_NAME = "Guest"
+
 
 class AppState:
     def __init__(self):
@@ -55,6 +58,30 @@ class AppState:
             self.game = db.game_with_shots(gid)
             self.log(f"User {user['name']} ({user['id']}) ready.")
             return user
+
+    def ensure_session(self):
+        """Make sure an active user + game exists so calibration can score.
+
+        When the display panel starts calibration without a shooter selected,
+        a Guest session is created automatically. Returns True when a scoring
+        session is active.
+        """
+        with self.lock:
+            if self.active_game_id and self.game:
+                return True
+            if self.active_user is None:
+                user = db.find_user(GUEST_USER_ID)
+                if user is None:
+                    user = db.create_user(GUEST_USER_ID, GUEST_USER_NAME)
+                self.active_user = {"id": user["id"], "name": user["name"]}
+            game = db.active_game_for(self.active_user["id"])
+            if game is None:
+                gid = db.start_game(self.active_user["id"])
+            else:
+                gid = game["id"]
+            self.active_game_id = gid
+            self.game = db.game_with_shots(gid)
+            return True
 
     def add_manual_shot(self, mm_x=None, mm_y=None, score=None):
         """Record one shot in the active game. Returns the updated shot dict."""

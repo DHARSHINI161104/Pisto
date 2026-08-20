@@ -72,3 +72,13 @@ def test_api_calibrate_requires_camera():
     assert resp.status_code == 400
     assert resp.get_json()["ok"] is False
     assert "camera" in resp.get_json()["error"].lower()
+
+
+def test_api_capture_requires_camera():
+    # conftest disables the camera, so capture must refuse cleanly.
+    app = create_app()
+    client = app.test_client()
+    resp = client.post("/api/capture")
+    assert resp.status_code == 400
+    assert resp.get_json()["ok"] is False
+    assert "camera" in resp.get_json()["error"].lower()

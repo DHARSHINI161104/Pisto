@@ -12,6 +12,7 @@
       <span class="disp-title">TARGET</span>
       <div class="row">
         <button class="green" id="btnCalibrate" onclick="calibrate()">Calibrate Target</button>
+        <span class="hint">press ENTER to capture a shot</span>
         <div class="toggles">
           <label class="toggle"><input type="checkbox" id="tglCamera" checked> <span>Show Camera</span></label>
           <label class="toggle"><input type="checkbox" id="tglGeo" checked> <span>Show Target Geometry</span></label>
@@ -157,6 +158,20 @@ async function calibrate() {
   refresh();
   setTimeout(() => { if (btn) btn.disabled = false; }, 1500);
 }
+
+async function captureShot() {
+  const r = await api('/api/capture', {});
+  if (!r.ok && r.error) alert(r.error);
+  refresh();
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const t = e.target;
+  if (t && (t.tagName === 'BUTTON' || t.tagName === 'INPUT' ||
+            t.tagName === 'TEXTAREA')) return;
+  captureShot();
+});
 
 function refresh() {
   fetch('/api/state').then(r => r.json()).then(s => {

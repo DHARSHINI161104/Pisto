@@ -53,6 +53,34 @@ class ShotDetector:
         mm_y = (cy_px - side / 2.0) / self.cal.scale_px_per_mm
         return mm_x, mm_y
 
+    def _find_blobs(self, diff, side):
+        """Return (mm_x, mm_y) of plausible pellet-sized changes in `diff`."""
+        lo_area, hi_area = self._area_range_px()
+        _, thresh = cv2.threshold(diff, config.DIFF_THRESHOLD, 255,
+                                  cv2.THRESH_BINARY)
+        thresh = np.uint8(thresh)  # findContours requires CV_8UC1
+        thresh = cv2.morphologyEx(
+            thresh, cv2.MORPH_OPEN,
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL,
+                                       cv2.CHAIN_APPROX_SIMPLE)
+        blobs = []
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < lo_area * 0.5 or area > hi_area * 3.0:
+                continue
+            M = cv2.moments(cnt)
+            if M["m00"] == 0:
+                continue
+            cx = M["m10"] / M["m00"]
+            cy = M["m01"] / M["m00"]
+            mm_x, mm_y = self._to_mm(cx, cy, side)
+            # Distance to centre must stay on/near the target (allow ring 1+).
+            if (mm_x ** 2 + mm_y ** 2) ** 0.5 > config.RING_RADII_MM[1] + 8:
+                continue
+            blobs.append((mm_x, mm_y))
+        return blobs
+
     # ---------------------------------------------------------- detection --
     def update(self, warped_gray):
         """Feed a warped grey frame; return newly confirmed holes in mm.
@@ -87,31 +115,10 @@ class ShotDetector:
 
         diff = cv2.absdiff(frame, self._reference)
         side = frame.shape[0]
-        lo_area, hi_area = self._area_range_px()
-
-        _, thresh = cv2.threshold(diff, config.DIFF_THRESHOLD, 255, cv2.THRESH_BINARY)
-        thresh = np.uint8(thresh)  # findContours requires CV_8UC1
-        thresh = cv2.morphologyEx(
-            thresh, cv2.MORPH_OPEN,
-            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL,
-                                       cv2.CHAIN_APPROX_SIMPLE)
 
         changed = False
         matched = set()   # candidate keys still alive this frame
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area < lo_area * 0.5 or area > hi_area * 3.0:
-                continue
-            M = cv2.moments(cnt)
-            if M["m00"] == 0:
-                continue
-            cx = M["m10"] / M["m00"]
-            cy = M["m01"] / M["m00"]
-            mm_x, mm_y = self._to_mm(cx, cy, side)
-            # Distance to centre must stay on/near the target (allow ring 1+).
-            if (mm_x ** 2 + mm_y ** 2) ** 0.5 > config.RING_RADII_MM[1] + 8:
-                continue
+        for mm_x, mm_y in self._find_blobs(diff, side):
             if self._is_known(mm_x, mm_y):
                 continue
             changed = True
@@ -152,6 +159,34 @@ class ShotDetector:
         # Gently adapt the reference to lighting drift when nothing changed.
         if not changed:
             self._reference = self._reference * 0.98 + frame * 0.02
+        self.last_frame = warped_gray
+        self.last_overlay = self.draw_overlay(warped_gray, self.holes)
+        return new_holes
+
+    def capture(self, warped_gray):
+        """Score any new holes visible in ONE frame (manual Enter capture).
+
+        Unlike update() this does not wait MIN_HOLE_PERSIST_FRAMES consecutive
+        frames - every plausible pellet-sized change not near an already-scored
+        hole is confirmed immediately. The reference is healed so a shot is
+        never scored twice.
+        """
+        if self._reference is None:
+            self.set_reference(warped_gray)
+            return []
+        frame = np.asarray(self._blur(warped_gray), dtype=np.float32)
+        diff = cv2.absdiff(frame, self._reference)
+        side = frame.shape[0]
+        new_holes = []
+        for mm_x, mm_y in self._find_blobs(diff, side):
+            if self._is_known(mm_x, mm_y):
+                continue
+            hole = (round(mm_x, 1), round(mm_y, 1))
+            self.holes.append(hole)
+            new_holes.append(hole)
+            self._heal_reference(frame, hole, side)
+        self._candidates.clear()
+        self.cooldown = config.SHOT_COOLDOWN_FRAMES
         self.last_frame = warped_gray
         self.last_overlay = self.draw_overlay(warped_gray, self.holes)
         return new_holes

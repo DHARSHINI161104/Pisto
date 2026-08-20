@@ -5,8 +5,11 @@ from datetime import date
 
 from flask import Flask, Response, jsonify, render_template, request, send_file
 
+import cv2
+
 import config
-from app import db, results, state
+from app import calibration, db, results, state
+from app.detection import ShotDetector
 from app.target_view import (target_geometry, target_svg_page, target_svg,
                              target_display_svg)
 
@@ -179,6 +182,60 @@ def create_app():
             st.set_mode(state.MODE_CALIBRATING)
             st.log("Calibration started - keep the target board still in view.")
             return jsonify({"ok": True, "state": st.public_state()})
+        except ValueError as e:
+            return jsonify({"ok": False, "error": str(e)}), 400
+
+    @app.post("/api/capture")
+    def api_capture():
+        """Capture the current camera frame, detect the new hole, score it.
+
+        The display panel calls this when the operator presses Enter. If the
+        target is not calibrated yet, the first press detects it and primes the
+        detector (a Guest session is created automatically); later presses score
+        each new hole on the target.
+        """
+        st = state.STATE
+        try:
+            from app import camera
+            if not camera.available():
+                return jsonify({"ok": False,
+                                "error": "No camera connected - connect a webcam "
+                                         "to capture and score shots."}), 400
+            st.ensure_session()
+            frame = camera.last_frame()
+            if frame is None:
+                return jsonify({"ok": False,
+                                "error": "No camera frame available yet."}), 400
+
+            if st.calibration is None or st.detector is None:
+                cal = calibration.detect_target(frame)
+                if cal is None:
+                    st.pipeline_error = ("Target not found - aim the camera at "
+                                         "the black bull and keep it still.")
+                    return jsonify({"ok": False,
+                                    "error": "Target not found in view - aim "
+                                             "the camera at the target."}), 400
+                st.calibration = cal
+                st.detector = ShotDetector(cal)
+                warped = cal.warp(frame)
+                st.detector.set_reference(
+                    cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY))
+                st.calibration_state = "ready"
+                st.set_mode(state.MODE_SHOOTING)
+                st.log("Target calibrated - press Enter after each shot.")
+                return jsonify({"ok": True, "primed": True,
+                                "state": st.public_state()})
+
+            warped = st.calibration.warp(frame)
+            warped_gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
+            new_holes = st.detector.capture(warped_gray)
+            shots = []
+            for mm_x, mm_y in new_holes:
+                shots.append(st.add_manual_shot(mm_x=mm_x, mm_y=mm_y))
+            if not shots:
+                st.log("Capture: no new hole detected.")
+            return jsonify({"ok": True, "shots": shots,
+                            "state": st.public_state()})
         except ValueError as e:
             return jsonify({"ok": False, "error": str(e)}), 400
 

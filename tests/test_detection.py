@@ -36,6 +36,31 @@ def test_no_holes_detected():
         assert det.update(img) == []
 
 
+def test_capture_scores_single_frame():
+    """Manual (Enter-key) capture scores a hole from a single frame."""
+    img, cal = generate_synthetic_target(side=400, holes_mm=[])
+    det = ShotDetector(cal)
+    det.set_reference(img)
+    for _ in range(config.DETECTOR_WARMUP_FRAMES + 1):
+        det.update(img)
+    shot_img, _ = generate_synthetic_target(side=400, holes_mm=[(8.0, 0.0)])
+    new = det.capture(shot_img)
+    assert len(new) == 1
+    assert abs(new[0][0] - 8.0) < 1.0 and abs(new[0][1]) < 1.0
+    # The same frame must not re-score the hole.
+    assert det.capture(shot_img) == []
+
+
+def test_capture_never_scores_known_holes():
+    """A hole already on the reference must be ignored by capture()."""
+    img, cal = generate_synthetic_target(side=400, holes_mm=[(5.0, 5.0)])
+    det = ShotDetector(cal)
+    det.set_reference(img)
+    for _ in range(config.DETECTOR_WARMUP_FRAMES + 1):
+        det.update(img)
+    assert det.capture(img) == []
+
+
 def test_single_hole_detected_and_scored():
     target = (8.0, 0.0)   # d=8 -> 9.7 by scoring
     found, cal = _holes_at(target)

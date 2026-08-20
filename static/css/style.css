@@ -167,6 +167,14 @@ th { color: var(--muted); font-weight: 600; }
   font-weight: 700;
   color: var(--muted);
 }
+.disp-toolbar .hint {
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  border: 1px dashed #33404f;
+  border-radius: 6px;
+  padding: 5px 10px;
+}
 .toggles { display: flex; gap: 10px; flex-wrap: wrap; }
 .toggle {
   display: inline-flex;
